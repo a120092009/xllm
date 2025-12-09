@@ -20,9 +20,34 @@ limitations under the License.
 namespace xllm {
 namespace layer {
 
+// Used to record information before padding
+struct PaddingInfo {
+  int64_t original_tokens = 0;  // Number of tokens before padding
+  int64_t padded_tokens = 0;    // Number of tokens after padding
+  bool active = false;          // Whether padding was performed
+};
+
 void update_dummy_run_input(int64_t dp_rank,
                             torch::Tensor& positions,
                             ModelInputParams& input_params);
+
+// Padding logic before Reduce Scatter
+// Ensure that the number of tokens is a multiple of the TP group size,
+// and at least equal to the TP size (so that each rank gets at least one token)
+std::pair<torch::Tensor, PaddingInfo> check_and_pad_before_scatter(
+    torch::Tensor x,
+    const ParallelArgs& parallel_args);
+
+// Unpadding logic after All Gather
+// Simply slice out the original length
+torch::Tensor check_and_unpad_after_gather(torch::Tensor x,
+                                           const PaddingInfo& pad_info);
+
+// given a tensor containing data from all DP ranks,
+// returns a slice containing only the tokens for the current DP rank
+torch::Tensor get_dp_local_slice(const torch::Tensor& input,
+                                 const ModelInputParams& params,
+                                 const ParallelArgs& args);
 
 }  // namespace layer
 }  // namespace xllm

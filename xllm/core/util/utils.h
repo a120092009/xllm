@@ -88,5 +88,18 @@ bool mmdata_to_proto(const xllm::MMData& cpp_mmdata, proto::MMData* pb_mmdata);
 bool proto_to_mmdata(const proto::MMData& pb_mmdata, xllm::MMData* cpp_mmdata);
 
 int32_t ceil_pow2(int32_t n);
+
+// Computes the new shape for tensor view casting between dtypes by bytes, for
+// use with from_blob.
+std::vector<int64_t> compute_view_shape(const torch::Tensor& src,
+                                        int64_t src_size,
+                                        int64_t target_size);
+
+// Simulates the Python tensor.view(dtype) functionality.
+// Reinterprets a raw byte tensor (usually uint8) as a tensor of the target data
+// type. Note: The input tensor must be contiguous in memory.
+torch::Tensor view_as_dtype(const torch::Tensor& src,
+                            torch::ScalarType target_dtype);
+
 }  // namespace util
 }  // namespace xllm
