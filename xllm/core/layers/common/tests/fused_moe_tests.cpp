@@ -313,8 +313,7 @@ TEST_F(FusedMoETest, LoadStateDictTest) {
   auto router_logits =
       CreateRouterLogits({batch_size * seq_len, num_experts}, router_values);
   auto score_bias = CreateFullTensor({num_experts}, 0.1f);
-  auto output = fused_moe->forward_experts(
-      hidden_states, router_logits, std::nullopt, false);
+  auto output = fused_moe->forward_experts(hidden_states, router_logits, false);
 
   // Verify output shape
   ASSERT_EQ(output.sizes().size(), 3) << "Output should be 3D tensor";
