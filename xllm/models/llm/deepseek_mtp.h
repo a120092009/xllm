@@ -33,9 +33,9 @@ namespace xllm {
 class DeepseekMultiTokenPredictorLayerImpl : public torch::nn::Module {
  public:
   DeepseekMultiTokenPredictorLayerImpl(const ModelContext& context,
-                                       const int32_t layer_index) {
+                                       const int32_t layer_index)
+      : model_args_(context.get_model_args()) {
     auto options = context.get_tensor_options();
-    auto model_args = context.get_model_args();
     auto parallel_args = context.get_parallel_args();
 
     // register submodules
@@ -44,8 +44,8 @@ class DeepseekMultiTokenPredictorLayerImpl : public torch::nn::Module {
     // no quantization for eh_proj
     eh_proj_ =
         register_module("eh_proj",
-                        layer::ReplicatedLinear(model_args.hidden_size() * 2,
-                                                model_args.hidden_size(),
+                        layer::ReplicatedLinear(model_args_.hidden_size() * 2,
+                                                model_args_.hidden_size(),
                                                 /*bias=*/false,
                                                 /*QuantArgs=*/QuantArgs(),
                                                 options));
@@ -63,6 +63,11 @@ class DeepseekMultiTokenPredictorLayerImpl : public torch::nn::Module {
     auto enorm_out = std::get<0>(enorm_(embed));
 
     torch::Tensor embedding_data = input_params.input_embedding;
+    // for dummy data parallel run, we set a empty embedding
+    if (attn_metadata.is_dummy) {
+      embedding_data = torch::zeros({embed.size(0), model_args_.hidden_size()},
+                                    embed.options());
+    }
     CHECK(embedding_data.defined())
         << "embedding is not defined in input_params.input_embedding";
     torch::Tensor previous_hidden_states = embedding_data;
@@ -102,6 +107,8 @@ class DeepseekMultiTokenPredictorLayerImpl : public torch::nn::Module {
   layer::RMSNorm hnorm_{nullptr};
   layer::ReplicatedLinear eh_proj_{nullptr};
   layer::DeepseekV2DecoderLayer mtp_block_{nullptr};
+
+  ModelArgs model_args_;
 };
 TORCH_MODULE(DeepseekMultiTokenPredictorLayer);
 
