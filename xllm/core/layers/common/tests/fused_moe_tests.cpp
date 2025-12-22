@@ -383,14 +383,10 @@ TEST_F(FusedMoETest, PrecisionVerificationTest) {
       router_values.push_back(static_cast<float>(j) * 0.1f);
     }
   }
-  // use custom logits and residual tensor for precision verification
+  // use custom logits for precision verification
   auto router_logits =
       CreateRouterLogits({batch_size * seq_len, num_experts}, router_values);
-  auto residual = CreateCustomInput(
-      {batch_size * seq_len, hidden_size},
-      std::vector<float>(batch_size * seq_len * hidden_size, 100.0f));
-  auto output =
-      fused_moe->forward_experts(hidden_states, router_logits, residual, false);
+  auto output = fused_moe->forward_experts(hidden_states, router_logits, false);
 
   xllm::Device device(options_.device());
   device.synchronize_default_stream();
