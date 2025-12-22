@@ -53,5 +53,10 @@ bool should_print_mtp_speculative_stats();
 // used to control whether to fix the speculative acceptance rate.
 double get_fix_speculative_acceptance_rate();
 
+// Check if the expert parallel balanced mode should be enabled.
+// Returns true if the XLLM_AVG_MOE_EN environment variable is set to "1",
+// "true", "TRUE", or "True", false otherwise.
+bool should_enable_avg_moe_en();
+
 }  // namespace util
 }  // namespace xllm

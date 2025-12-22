@@ -116,5 +116,13 @@ double get_fix_speculative_acceptance_rate() {
   return value;
 }
 
+bool should_enable_avg_moe_en() {
+  // Default is false to disable the expert parallel balanced mode.
+  // Set XLLM_AVG_MOE_EN=1 to enable the expert parallel balanced mode.
+  constexpr bool kDefaultValue = false;
+  constexpr const char* kAvgMoEEnEnvVar = "XLLM_AVG_MOE_EN";
+  return get_bool_env(kAvgMoEEnEnvVar, kDefaultValue);
+}
+
 }  // namespace util
 }  // namespace xllm

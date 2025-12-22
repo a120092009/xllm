@@ -23,6 +23,7 @@ limitations under the License.
 #include "framework/parallel_state/parallel_state.h"
 #include "kernels/ops_api.h"
 #include "layer_utils.h"
+#include "util/env_var.h"
 #include "util/utils.h"
 
 namespace {
@@ -263,6 +264,121 @@ FusedMoEImpl::FusedMoEImpl(int64_t num_experts,
             options_),
         false);
   }
+
+  // initialize the precomputed data for enforced load balancing
+  init_forced_balanced_assignment();
+}
+
+void FusedMoEImpl::init_forced_balanced_assignment() {
+  is_avg_moe_en_ = xllm::util::should_enable_avg_moe_en();
+  if (!is_avg_moe_en_) {
+    return;
+  }
+
+  LOG(INFO) << "[FusedMoE] XLLM_AVG_MOE_EN enabled: Pre-calculating balanced "
+               "expert IDs.";
+
+  // 1. calculate the local capacity for each DP rank
+  int64_t max_seqs = FLAGS_max_seqs_per_batch;
+  int64_t spec_tokens = FLAGS_num_speculative_tokens;
+  int64_t local_token_capacity = (1 + spec_tokens) * max_seqs;
+
+  // 2. get the DP size
+  // if parallel_args_.dp_size() is not available, default to 1
+  int64_t dp_size = 1;
+  if (parallel_args_.dp_size() > 1) {
+    dp_size = parallel_args_.dp_size();
+  }
+
+  // 3. calculate the global capacity for the table
+  // Python: n_tokens = SparseMoeMlp.max_batched_token * self.dp_size
+  int64_t global_token_capacity = local_token_capacity * dp_size;
+
+  // 4. prepare the basic parameters
+  int64_t num_experts = num_total_experts_;
+  int64_t expert_group = parallel_args_.ep_size();
+  if (expert_group < 1) expert_group = 1;
+
+  // 5. precompute the reduce_weight (uniform distribution)
+  // Python: val = 1.0 / float(num_experts)
+  float val = 1.0f / static_cast<float>(num_experts);
+  // note: reduce_weight is sliced from the beginning even in all2all, but for
+  // safety we keep the same length as expert_ids
+  auto weight_options = options_.dtype(torch::kFloat32);
+  avg_moe_reduce_weight_ =
+      torch::full({global_token_capacity, topk_}, val, weight_options);
+
+  // 6. precompute the expert_ids (Interleaved Pattern)
+  int64_t total_slots = global_token_capacity * topk_;
+  int64_t batch_table_size =
+      ((total_slots + num_experts - 1) / num_experts) * num_experts;
+  int64_t hi_val = batch_table_size / num_experts;
+  int64_t dim3 = num_experts / expert_group;
+
+  auto table = torch::arange(batch_table_size, options_.dtype(torch::kInt32)) %
+               num_experts;
+
+  // core hack pattern
+  table = table.view({hi_val, expert_group, dim3})
+              .transpose(1, 2)
+              .contiguous()
+              .flatten();
+
+  // store the complete table
+  avg_moe_expert_id_ =
+      table.slice(0, 0, total_slots).view({global_token_capacity, topk_});
+
+  LOG(INFO) << "[FusedMoE] Balanced Table Size: " << avg_moe_expert_id_.sizes()
+            << " (DP Size: " << dp_size << ")";
+}
+
+bool FusedMoEImpl::try_get_balanced_experts(int64_t num_tokens,
+                                            torch::Tensor& out_expert_id,
+                                            torch::Tensor& out_reduce_weight,
+                                            bool enable_all2all_communication) {
+  if (!is_avg_moe_en_) {
+    return false;
+  }
+
+  // 1. process the reduce_weight
+  // Python: reduce_weight = SparseMoeMlp.reduce_weight[:n_tokens] (any
+  // scenario) just slice from the beginning of the batch length
+  if (num_tokens > avg_moe_reduce_weight_.size(0)) {
+    // simple overflow protection, should not happen if init is correct
+    return false;
+  }
+  out_reduce_weight = avg_moe_reduce_weight_.slice(0, 0, num_tokens);
+
+  // 2. process expert_ids
+  int64_t start_idx = 0;
+
+  if (enable_all2all_communication) {
+    // Python scenario 2 (All2All):
+    // expert_ids = table[dp_rank * n_tokens : dp_rank * n_tokens + n_tokens]
+
+    int64_t dp_rank = 0;
+    dp_rank = parallel_args_.dp_local_process_group_->rank();
+    start_idx = dp_rank * num_tokens;
+  } else {
+    // Python scenario 1 (Non-All2All):
+    // expert_ids = table[:n_tokens]
+    start_idx = 0;
+  }
+
+  // overflow check
+  int64_t end_idx = start_idx + num_tokens;
+  if (end_idx > avg_moe_expert_id_.size(0)) {
+    LOG(ERROR) << "[FusedMoE] VLLM_AVG_MOE_EN Overflow: "
+               << "Needed range [" << start_idx << ", " << end_idx << "], "
+               << "but table capacity is " << avg_moe_expert_id_.size(0) << ". "
+               << "Ensure FLAGS_max_seqs_per_batch matches Python config.";
+    return false;
+  }
+
+  // slice and return
+  out_expert_id = avg_moe_expert_id_.slice(0, start_idx, end_idx);
+
+  return true;
 }
 
 torch::Tensor FusedMoEImpl::select_experts(
@@ -294,6 +410,12 @@ torch::Tensor FusedMoEImpl::select_experts(
     std::tie(reduce_weight, expert_id) =
         xllm::kernel::moe_active_topk(moe_active_topk_params);
   }
+
+  // try to get balanced experts
+  try_get_balanced_experts(hidden_states_2d.size(0),
+                           expert_id,
+                           reduce_weight,
+                           enable_all2all_communication);
 
   // Step 2: generate expert ids
   torch::Tensor gather_idx;

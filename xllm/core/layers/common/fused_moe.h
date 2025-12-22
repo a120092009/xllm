@@ -112,6 +112,11 @@ class FusedMoEImpl : public torch::nn::Module {
   xllm::Device device_;
   bool stream_initialized_ = false;
 
+  // performance debug: enforce expert parallel balanced
+  bool is_avg_moe_en_ = false;
+  torch::Tensor avg_moe_expert_id_;
+  torch::Tensor avg_moe_reduce_weight_;
+
   ReplicatedLinear gate_{nullptr};
   DenseMLP shared_experts_{nullptr};
   DeepEP deep_ep_{nullptr};
@@ -135,6 +140,15 @@ class FusedMoEImpl : public torch::nn::Module {
 
   void load_e_score_correction_bias(const StateDict& state_dict);
   void load_experts(const StateDict& state_dict);
+
+  // initialize precomputed data for enforced load balancing
+  void init_forced_balanced_assignment();
+
+  // try to obtain balanced expert_ids
+  bool try_get_balanced_experts(int64_t num_tokens,
+                                torch::Tensor& out_expert_id,
+                                torch::Tensor& out_reduce_weight,
+                                bool enable_all2all_communication);
 };
 TORCH_MODULE(FusedMoE);
 
