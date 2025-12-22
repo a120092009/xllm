@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "common/macros.h"
 #include "framework/kv_cache/embedding_allocator.h"
+#include "framework/sampling/rejection_sampler.h"
 #if defined(USE_NPU)
 #include "framework/kv_cache/spec_kv_cache_transfer.h"
 #endif
@@ -158,5 +159,8 @@ class SpeculativeWorkerImpl : public WorkerImpl {
   // These accumulate over the lifetime of SpeculativeWorkerImpl
   size_t total_accepted_tokens_ = 0;   // Total number of accepted tokens
   size_t total_generated_tokens_ = 0;  // Total number of generated draft tokens
+
+  // for debug purpose
+  std::shared_ptr<RejectionSamplerRateController> rate_controller_;
 };
 }  // namespace xllm
