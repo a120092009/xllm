@@ -39,5 +39,13 @@ std::string get_string_env(const std::string& name);
 // insufficient.
 int64_t get_process_group_test_timeout_seconds();
 
+// Check if MTP speculative sampling statistics should be printed.
+// Returns true if the XLLM_ENABLE_MTP_SPECULATIVE_STATS environment variable
+// is set to "1", "true", "TRUE", or "True", false otherwise.
+// This is used to control whether to print accepted token count, generated
+// token count, and acceptance rate for MTP speculative sampling to prevent
+// information flooding.
+bool should_print_mtp_speculative_stats();
+
 }  // namespace util
 }  // namespace xllm

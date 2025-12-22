@@ -153,5 +153,10 @@ class SpeculativeWorkerImpl : public WorkerImpl {
 #if defined(USE_NPU)
   std::shared_ptr<SpecKVCacheTransfer> kv_cache_transfer_;
 #endif
+
+  // Statistics for MTP speculative sampling
+  // These accumulate over the lifetime of SpeculativeWorkerImpl
+  size_t total_accepted_tokens_ = 0;   // Total number of accepted tokens
+  size_t total_generated_tokens_ = 0;  // Total number of generated draft tokens
 };
 }  // namespace xllm

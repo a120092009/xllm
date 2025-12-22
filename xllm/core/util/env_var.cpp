@@ -72,5 +72,15 @@ int64_t get_process_group_test_timeout_seconds() {
   return get_int_env(kTimeoutEnvVar, kDefaultTimeoutSeconds);
 }
 
+bool should_print_mtp_speculative_stats() {
+  // Default is false to prevent information flooding.
+  // Set XLLM_ENABLE_MTP_SPECULATIVE_STATS=1 to enable printing of MTP
+  // speculative sampling statistics (accepted tokens, generated tokens,
+  // acceptance rate).
+  constexpr bool kDefaultValue = false;
+  constexpr const char* kStatsEnvVar = "XLLM_ENABLE_MTP_SPECULATIVE_STATS";
+  return get_bool_env(kStatsEnvVar, kDefaultValue);
+}
+
 }  // namespace util
 }  // namespace xllm

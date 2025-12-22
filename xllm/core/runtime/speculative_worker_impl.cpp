@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "speculative_worker_impl.h"
 
+#include <glog/logging.h>
+
+#include <iomanip>
+
 #include "common/global_flags.h"
 #include "common/metrics.h"
 #include "framework/request/mm_data.h"
@@ -687,6 +691,25 @@ SampleOutput SpeculativeWorkerImpl::validate(
   size_t num_draft_tokens = num_target_tokens - batch_size;
   COUNTER_ADD(speculative_num_draft_tokens_total, num_draft_tokens);
   COUNTER_ADD(speculative_num_accepted_tokens_total, num_draft_tokens - count);
+
+  // MTP speculative sampling statistics
+  size_t num_accepted_tokens = num_draft_tokens - count;
+  total_accepted_tokens_ += num_accepted_tokens;
+  total_generated_tokens_ += num_draft_tokens;
+
+  // Print statistics if environment variable is enabled
+  if (util::should_print_mtp_speculative_stats()) {
+    double acceptance_rate =
+        total_generated_tokens_ > 0
+            ? static_cast<double>(total_accepted_tokens_) /
+                  static_cast<double>(total_generated_tokens_) * 100.0
+            : 0.0;
+    LOG(INFO) << "MTP Speculative Sampling Stats - "
+              << "Accepted tokens: " << total_accepted_tokens_
+              << ", Generated tokens: " << total_generated_tokens_
+              << ", Acceptance rate: " << std::fixed << std::setprecision(2)
+              << acceptance_rate << "%";
+  }
 
   return sample_output;
 }
