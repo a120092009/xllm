@@ -27,18 +27,6 @@ limitations under the License.
 #include "util/utils.h"
 
 namespace {
-torch::Tensor create_group_gemm_output(
-    const torch::Tensor& a,
-    const torch::Tensor& b,
-    const torch::Tensor& group_list,
-    torch::ScalarType dtype = torch::ScalarType::BFloat16) {
-  torch::TensorOptions target_options = a.options().dtype(dtype);
-  if (b.dim() != 2) {
-    return torch::empty({a.size(0), b.size(1)}, target_options);
-  }
-  return torch::empty({group_list.size(0), a.size(0), b.size(0)},
-                      target_options);
-}
 
 int get_dtype_size(torch::ScalarType dtype) {
   return static_cast<int>(torch::elementSize(dtype));
@@ -381,6 +369,51 @@ bool FusedMoEImpl::try_get_balanced_experts(int64_t num_tokens,
   return true;
 }
 
+torch::Tensor FusedMoEImpl::create_group_gemm_output(
+    const torch::Tensor& a,
+    const torch::Tensor& b,
+    const torch::Tensor& group_list,
+    torch::ScalarType dtype,
+    torch::Tensor& workspace) {
+  // unify shape logic: define the target shape once.
+  bool is_3d_weight = (b.dim() != 2);
+  int64_t num_tokens = a.size(0);
+  int64_t out_dim = is_3d_weight ? b.size(1) : b.size(0);
+
+  std::vector<int64_t> output_shape;
+  int64_t required_elements = num_tokens * out_dim;
+
+  if (is_3d_weight) {
+    output_shape = {num_tokens, out_dim};
+  } else {
+    output_shape = {group_list.size(0), num_tokens, out_dim};
+    required_elements *= group_list.size(0);
+  }
+
+  auto options = a.options().dtype(dtype);
+
+  // non-smoothquant: direct allocation
+  if (!is_smoothquant_) {
+    return torch::empty(output_shape, options);
+  }
+
+  // smoothquant: managed workspace logic
+  if (!workspace.defined()) {
+    // Lazy initialization: allocate max buffer for the lifecycle
+    // Note: accessing class members w13_ and w2_ directly for context
+    int64_t max_width = std::max(w13_.size(1), w2_.size(1));
+    workspace = torch::empty({num_tokens * max_width}, options);
+  }
+
+  // view construction
+  CHECK(workspace.numel() >= required_elements)
+      << "FusedMoE Workspace too small! Alloc: " << workspace.numel()
+      << ", Req: " << required_elements;
+
+  // utilize the pre-calculated output_shape
+  return workspace.slice(0, 0, required_elements).view(output_shape);
+}
+
 torch::Tensor FusedMoEImpl::select_experts(
     const torch::Tensor& hidden_states_2d,
     const torch::Tensor& router_logits_2d,
@@ -592,12 +625,16 @@ torch::Tensor FusedMoEImpl::forward_experts(const torch::Tensor& hidden_states,
     token_sum = deep_ep_meta.token_sum;
   }
 
+  // common gemm workspace for reduce memory footprint
+  torch::Tensor gemm_workspace;
+
   // Step 4: group gemm 1
   torch::Tensor gemm1_out =
       create_group_gemm_output(expand_hidden_states,
                                w13_,
                                selected_expert_info.token_count_slice,
-                               hidden_states_dtype);
+                               hidden_states_dtype,
+                               gemm_workspace);
   // ensure the lifespan of these parameters via brace
   {
     xllm::kernel::GroupGemmParams group_gemm_params;
@@ -669,7 +706,8 @@ torch::Tensor FusedMoEImpl::forward_experts(const torch::Tensor& hidden_states,
       create_group_gemm_output(act_out,
                                w2_,
                                selected_expert_info.token_count_slice,
-                               hidden_states_dtype);
+                               hidden_states_dtype,
+                               gemm_workspace);
   // ensure the lifespan of these parameters via brace
   {
     xllm::kernel::GroupGemmParams group_gemm_params;
@@ -725,10 +763,11 @@ torch::Tensor FusedMoEImpl::forward_experts(const torch::Tensor& hidden_states,
     }
   }
 
-  // After group gemm is finished, expand_hidden_states and input_scale are no
+  // After group gemm is finished, some tensors are no
   // longer needed. We must explicitly release the memory.
   expand_hidden_states = torch::Tensor();
   selected_expert_info.input_scale = std::nullopt;
+  act_out = torch::Tensor();
 
   // Step 7: combine the intermediate results and get the final hidden states
   torch::Tensor final_hidden_states;
