@@ -58,5 +58,11 @@ double get_fix_speculative_acceptance_rate();
 // "true", "TRUE", or "True", false otherwise.
 bool should_enable_avg_moe_en();
 
+// Get the chunked size for prefill in DeepSeek MoE.
+// Returns the chunked size if the XLLM_MOE_PREFILL_CHUNKED_SIZE
+// environment variable is set to a valid integer value, 0 otherwise. This is
+// used to control the chunked size for prefill in DeepSeek MoE.
+int64_t get_moe_prefill_chunked_size();
+
 }  // namespace util
 }  // namespace xllm

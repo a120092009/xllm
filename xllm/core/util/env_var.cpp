@@ -124,5 +124,14 @@ bool should_enable_avg_moe_en() {
   return get_bool_env(kAvgMoEEnEnvVar, kDefaultValue);
 }
 
+int64_t get_moe_prefill_chunked_size() {
+  // Default is 0 to disable the chunked prefill in DeepSeek MoE.
+  // Set XLLM_MOE_PREFILL_CHUNKED_SIZE to a valid integer value to set
+  // the chunked size for prefill in DeepSeek MoE.
+  constexpr int64_t kDefaultValue = 0;
+  constexpr const char* kChunkedSizeEnvVar = "XLLM_MOE_PREFILL_CHUNKED_SIZE";
+  return get_int_env(kChunkedSizeEnvVar, kDefaultValue);
+}
+
 }  // namespace util
 }  // namespace xllm

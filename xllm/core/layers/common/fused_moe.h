@@ -116,6 +116,7 @@ class FusedMoEImpl : public torch::nn::Module {
   bool is_avg_moe_en_ = false;
   torch::Tensor avg_moe_expert_id_;
   torch::Tensor avg_moe_reduce_weight_;
+  int64_t prefill_chunked_size_;
 
   ReplicatedLinear gate_{nullptr};
   DenseMLP shared_experts_{nullptr};

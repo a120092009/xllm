@@ -255,6 +255,9 @@ FusedMoEImpl::FusedMoEImpl(int64_t num_experts,
 
   // initialize the precomputed data for enforced load balancing
   init_forced_balanced_assignment();
+
+  // initialize the prefill chunked size
+  prefill_chunked_size_ = xllm::util::get_moe_prefill_chunked_size();
 }
 
 void FusedMoEImpl::init_forced_balanced_assignment() {
@@ -856,12 +859,32 @@ torch::Tensor FusedMoEImpl::forward(const torch::Tensor& hidden_states,
                                    parallel_args_.dp_local_process_group_,
                                    input_params.dp_global_token_nums);
   }
-  // MoE Gate
-  auto router_logits = gate_(input);
 
-  // MoE Experts
-  auto output =
-      forward_experts(input, router_logits, enable_all2all_communication);
+  int64_t chunk_size = prefill_chunked_size_;
+  int64_t total_tokens = input.size(0);
+  bool is_moe_chunked_prefill = chunk_size > 0 && total_tokens > chunk_size &&
+                                !enable_all2all_communication;
+
+  torch::Tensor output;
+  if (is_moe_chunked_prefill) {
+    output = torch::empty_like(input);
+    int64_t num_chunks = (total_tokens + chunk_size - 1) / chunk_size;
+
+    for (int64_t i = 0; i < num_chunks; ++i) {
+      int64_t start_idx = i * chunk_size;
+      int64_t end_idx = std::min(start_idx + chunk_size, total_tokens);
+      auto input_slice = input.slice(/*dim=*/0, start_idx, end_idx);
+      auto logits_slice = gate_(input_slice);
+      auto output_slice = forward_experts(
+          input_slice, logits_slice, enable_all2all_communication);
+      output.slice(/*dim=*/0, start_idx, end_idx).copy_(output_slice);
+    }
+  } else {
+    auto router_logits = gate_(input);
+
+    output =
+        forward_experts(input, router_logits, enable_all2all_communication);
+  }
 
   if (need_gather_and_slice) {
     output = get_dp_local_slice(output, input_params, parallel_args_);
