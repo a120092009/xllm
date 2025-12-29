@@ -89,8 +89,8 @@ class QWen3ModelImpl : public LlmModelImplBase<QWen3DecoderLayer> {
       }
       return freqs_t;
     };
-    cos_pos = apply(cos_pos.reshape({positions.size(0), -1, cos_pos.size(1)}));
-    sin_pos = apply(sin_pos.reshape({positions.size(0), -1, sin_pos.size(1)}));
+    cos_pos = apply(cos_pos.reshape({positions.size(0), -1, cos_pos.size(-1)}));
+    sin_pos = apply(sin_pos.reshape({positions.size(0), -1, sin_pos.size(-1)}));
     return std::make_pair(cos_pos, sin_pos);
   }
 
